@@ -30,6 +30,9 @@
 })(function(window, document, videojs) {
   "use strict";
 
+  // support es6 style import
+  videojs = videojs.default || videojs;
+
   var extend = function(obj) {
     var arg;
     var index;
@@ -279,6 +282,16 @@
           google.ima.AdEvent.Type.SKIPPED,
           this.onAdComplete_);
 
+      if (this.isMobile) {
+        // Show/hide controls on pause and resume (triggered by tap).
+        this.adsManager.addEventListener(
+            google.ima.AdEvent.Type.PAUSED,
+            onAdPaused_);
+        this.adsManager.addEventListener(
+            google.ima.AdEvent.Type.RESUMED,
+            onAdResumed_);
+      }
+
       if (!this.autoPlayAdBreaks) {
         try {
           var initWidth = this.getPlayerWidth();
@@ -392,6 +405,7 @@
       this.adsActive = true;
       this.adPlaying = true;
       this.contentSource = this.player.currentSrc();
+      this.contentSourceType = this.player.currentType();
       this.player.off('ended', this.localContentEndedListener);
       if (adEvent.getAd().getAdPodInfo().getPodIndex() != -1) {
         // Skip this call for post-roll ads
@@ -409,6 +423,7 @@
       this.vjsControls.hide();
       showPlayButton();
       this.player.pause();
+      hideAdControls_();
     }.bind(this);
 
     /**
@@ -450,7 +465,12 @@
       this.adContainerDiv.style.display = 'none';
       if (this.contentComplete == true) {
         if (this.contentPlayer.src != this.contentSource) {
-          this.player.src(this.contentSource);
+          // Avoid setted autoplay after the post-roll
+          this.player.autoplay(false);
+          this.player.src({
+            src: this.contentSource,
+            type: this.contentSourceType
+          });
         }
         for (var index in this.contentAndAdsEndedListeners) {
           this.contentAndAdsEndedListeners[index]();
@@ -488,6 +508,29 @@
       }
       // For non-linear ads that show after a linear ad.
       this.adContainerDiv.style.display = 'block';
+      this.player.trigger('ads-ad-started');
+    }.bind(this);
+
+    /**
+     * Syncs controls when an ad pauses.
+     * @param {google.ima.AdEvent} adEvent The AdEvent thrown by the AdsManager.
+     * @private
+     */
+    var onAdPaused_ = function(adEvent) {
+      showPauseButton();
+      showAdControls_();
+      this.adPlaying = false;
+    }.bind(this);
+
+    /**
+     * Syncs controls when an ad resumes.
+     * @param {google.ima.AdEvent} adEvent The AdEvent thrown by the AdsManager.
+     * @private
+     */
+    var onAdResumed_ = function(adEvent) {
+      showPlayButton();
+      hideAdControls_();
+      this.adPlaying = true;
     }.bind(this);
 
     /**
@@ -541,19 +584,19 @@
     }.bind(this);
 
     this.getPlayerWidth = function() {
-      var computedStyle = getComputedStyle(this.player.el()) || {};
+      var boundingRect = this.player.el().getBoundingClientRect() || {};
 
-      return parseInt(computedStyle.width, 10) || this.player.width();
+      return parseInt(boundingRect.width, 10) || this.player.width();
     }.bind(this);
 
     this.getPlayerHeight = function() {
-      var computedStyle = getComputedStyle(this.player.el()) || {};
+      var boundingRect = this.player.el().getBoundingClientRect() || {};
 
-      return parseInt(computedStyle.height, 10) || this.player.height();
+      return parseInt(boundingRect.height, 10) || this.player.height();
     }.bind(this);
 
     /**
-     * Hides the ad controls on mouseout.
+     * Hide the ad controls.
      * @private
      */
     var hideAdControls_ = function() {
@@ -1038,7 +1081,7 @@
     /**
      * Current plugin version.
      */
-    this.VERSION = '0.6.0';
+    this.VERSION = '0.7.0';
 
     /**
      * Stores user-provided settings.
@@ -1234,6 +1277,13 @@
     this.seekThreshold = 100;
 
     /**
+     * Whether or not we are running on a mobile platform.
+     */
+    this.isMobile = (navigator.userAgent.match(/iPhone/i) ||
+        navigator.userAgent.match(/iPad/i) ||
+        navigator.userAgent.match(/Android/i));
+
+    /**
      * Stores data for the content playhead tracker.
      */
     this.contentPlayheadTracker = {
@@ -1291,6 +1341,12 @@
     this.contentSource = '';
 
     /**
+     * Stores the content source type so we can re-populate it manually after a
+     * post-roll.
+     */
+    this.contentSourceType = '';
+
+    /**
      * Local content ended listener for contentComplete.
      */
     this.localContentEndedListener = function() {
@@ -1315,7 +1371,8 @@
     }.bind(this);
 
     this.playerDisposedListener = function(){
-      this.contentEndedListeners, this.contentAndAdsEndedListeners = [], [];
+      this.contentEndedListeners = [];
+      this.contentAndAdsEndedListeners = [];
       this.contentComplete = true;
       this.player.off('ended', this.localContentEndedListener);
 
@@ -1349,7 +1406,8 @@
 
     this.controlPrefix = (this.settings.id + '_') || '';
 
-    this.contentPlayer = document.getElementById(this.settings['id'] + '_html5_api');
+    // Get contentPlayer (tech agnostic)
+    this.contentPlayer = document.getElementById(this.settings.id).getElementsByClassName('vjs-tech')[0];
 
     // Detect inline options
     if(this.contentPlayer.hasAttribute('autoplay')){
